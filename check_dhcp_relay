@@ -8,6 +8,7 @@ import argparse
 import select
 import struct
 import sys
+import time
 
 def main():
     BOOTP_STRUCT = struct.Struct('!cccc4s2s2s4s4s4s4s16s64s128s')
@@ -70,9 +71,11 @@ def main():
 
     sock_send = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     sock.sendto(dhcp_request, (str(dhcp_host), PORT))
+    start = time.clock()
 
     ready = select.select([sock], [], [], args.timeout)
     if ready[0]:
+        end = time.clock()
         data = sock.recv(BOOTP_STRUCT.size)
         logging.debug("DHCP RESPONSE: {}".format(data))
         dhcp_values = BOOTP_STRUCT.unpack(data[:BOOTP_STRUCT.size])
@@ -93,6 +96,7 @@ def main():
         if xid != rxid:
             print("XIDs did not match")
             sys.exit(2)
+        print("OK | responsetime={:.2f}s".format(end-start))
         sys.exit(0)
     else:
         print("DHCP Server unreachable")
