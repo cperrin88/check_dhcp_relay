@@ -31,9 +31,9 @@ def main():
 
     if not args.verbose:
         level = logging.ERROR
-    elif args.verbose is 1:
+    elif args.verbose == 1:
         level = logging.WARNING
-    elif args.verbose is 2:
+    elif args.verbose == 2:
         level = logging.INFO
     elif args.verbose >= 3:
         level = logging.DEBUG
