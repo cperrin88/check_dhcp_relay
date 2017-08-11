@@ -55,25 +55,8 @@ def main():
 
     client_mac = b'\xF6\xEB\x05\xFA\x53\x0C'
 
-    PORT = 67
-
-    DHCP = BOOTP_STRUCT.pack(b'\x01', b'\x01', b'\x06', b'\x00', xid, b'\x00', b'\x08',
-                      b'\x00', b'\x00', b'\x00',
-                      int(gateway_address).to_bytes(4,byteorder='big'),
-                      b'\xF6\xEB\x05\xFA\x53\x0C', b'\x00', b'\x00')
-
-
-
-    DHCP_SUBNET_MASK = struct.pack("!cc4s", b'\x01',b'\x04',int(subnet_mask).to_bytes(4, byteorder='big'))
-    DHCP_SUBNET =  struct.pack("!cc4s", b'\x76',b'\x04',int(subnet).to_bytes(4, byteorder='big'))
-    DHCP_MESSAGE = struct.pack("!ccc", b'\x35', b'\x01', b'\x01')
-
-
-    DHCP_OPTIONS = DHCP_MAGIC_COOKIE+DHCP_MESSAGE+DHCP_SUBNET_MASK+DHCP_SUBNET+DHCP_END_FIELD
-
-
     sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-    sock.bind(('0.0.0.0', PORT))
+    sock.bind(('0.0.0.0', 67))
 
     DHCP_REQUEST(sock, dhcp_host, xid, gateway_address, client_mac, subnet_mask, subnet)
 
