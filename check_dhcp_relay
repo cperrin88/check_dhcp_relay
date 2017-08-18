@@ -9,14 +9,14 @@ import select
 import struct
 import sys
 import time
-
+import binascii
 
 BOOTP_STRUCT = struct.Struct('!cccc4s2s2s4s4s4s4s16s64s128s')
 DHCP_MAGIC_COOKIE = b'\x63\x82\x53\x63'
 DHCP_END_FIELD = b'\xFF'
 
-def main():
 
+def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('-H', '--host', required=True, type=str, help='address or name of the DHCP server')
     parser.add_argument('-r', '--relay', required=True, type=str, help='relay host address')
@@ -24,11 +24,14 @@ def main():
     parser.add_argument('-m', '--mask', required=True, type=str, help='netmask for the network in dotted format')
     parser.add_argument('-t', '--timeout', default=10, type=int, help='time before the request times out (default: 10)')
     parser.add_argument('-l', '--listen', default='0.0.0.0', type=str, help='listen address (default: 0.0.0.0)')
-    parser.add_argument('--no-release', default=False , action='store_true', help='do not release IP at the end')
-    parser.add_argument('--verbose', '-v', action='count', help='increase the log level (use multiple times to increase verbosity)')
+    parser.add_argument('-c', '--mac', type=str, help='mac address to use during request')
+    parser.add_argument('--no-release', default=False, action='store_true', help='do not release IP at the end')
+    parser.add_argument('--verbose', '-v', action='count',
+                        help='increase the log level (use multiple times to increase verbosity)')
 
     args = parser.parse_args()
 
+    level = None
     if not args.verbose:
         level = logging.ERROR
     elif args.verbose == 1:
@@ -40,25 +43,34 @@ def main():
 
     logging.basicConfig(level=level)
 
-    xid = random.randint(0, 2**(4*8)).to_bytes(4,byteorder='big')
+    xid = random.randint(0, 2 ** (4 * 8)).to_bytes(4, byteorder='big')
     try:
         dhcp_host = ipaddress.IPv4Address(args.host)
     except ipaddress.AddressValueError:
         host = socket.gethostbyname(args.host)
         dhcp_host = ipaddress.IPv4Address(host)
 
-    gateway_address = ipaddress.IPv4Address(args.relay)
+    client_mac = args.mac
 
+    if not client_mac:
+        separator = ":"
+
+        mac = [random.randint(0, 255) for _ in range(0, 6)]
+        mac[0] = (mac[0] & 0xfc) | 0x02
+        client_mac = separator.join(['{0:02x}'.format(x) for x in mac])
+
+    gateway_address = ipaddress.IPv4Address(args.relay)
 
     subnet_mask = ipaddress.IPv4Address(args.mask)
     subnet = ipaddress.IPv4Address(args.network)
 
-    client_mac = b'\xF6\xEB\x05\xFA\x53\x0C'
+    logging.info('Client MAC: {}'.format(client_mac))
+    client_mac = binascii.unhexlify(client_mac.replace(":", ""))
 
     sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     sock.bind(('0.0.0.0', 67))
 
-    DHCP_REQUEST(sock, dhcp_host, xid, gateway_address, client_mac, subnet_mask, subnet)
+    dhcp_request(sock, dhcp_host, xid, gateway_address, client_mac, subnet_mask, subnet)
 
     start = time.clock()
 
@@ -68,7 +80,7 @@ def main():
         data = sock.recv(BOOTP_STRUCT.size)
         logging.debug("DHCP RESPONSE: {}".format(data))
         dhcp_values = BOOTP_STRUCT.unpack(data[:BOOTP_STRUCT.size])
-        op, htyp, hlen, hops, rxid, secs, flags, ciaddr, yiaddr, siaddr, giaddr, chaddr, sname, file = dhcp_values
+        op, htyp, hlen, hops, rxid, secs, flags, ciaddr, yiaddr, siaddr, giaddr, chaddr, sname, bfile = dhcp_values
 
         client_address = ipaddress.IPv4Address(yiaddr)
         server_address = ipaddress.IPv4Address(siaddr)
@@ -79,58 +91,58 @@ def main():
         logging.info('Gateway IP: {}'.format(gateway_address))
         logging.info('Server name: {}'.format(sname.decode()))
 
-
         if xid != rxid:
             print("XIDs did not match")
             sys.exit(2)
 
         if not args.no_release:
-            DHCP_RELEASE(sock, dhcp_host, xid, gateway_address, client_address, server_address, client_mac, subnet_mask, subnet)
+            dhcp_release(sock, dhcp_host, xid, gateway_address, client_address, server_address, client_mac, subnet_mask,
+                         subnet)
 
         sock.close()
 
-        print("OK | responsetime={:.2f}s;;;;".format(end-start))
+        print("DHCP OK | responsetime={:.2f}ms;;;;".format((end - start) * 10))
         sys.exit(0)
     else:
-        print("DHCP Server unreachable")
+        print("DHCP server unreachable")
         sys.exit(2)
 
-def DHCP_REQUEST(sock, server, xid, gateway_address, hwaddress, subnet_mask, subnet):
-    DHCP = BOOTP_STRUCT.pack(b'\x01', b'\x01', b'\x06', b'\x00', xid, b'\x00', b'\x08',
-                      b'\x00', b'\x00', b'\x00',
-                      int(gateway_address).to_bytes(4,byteorder='big'),
-                      hwaddress, b'\x00', b'\x00')
+
+def dhcp_request(sock, server, xid, gateway_address, hwaddress, subnet_mask, subnet):
+    dhcp_frame = BOOTP_STRUCT.pack(b'\x01', b'\x01', b'\x06', b'\x00', xid, b'\x00', b'\x08', b'\x00', b'\x00', b'\x00',
+                                   int(gateway_address).to_bytes(4, byteorder='big'), hwaddress, b'\x00', b'\x00')
+
+    dhcp_subnet_mask = struct.pack("!cc4s", b'\x01', b'\x04', int(subnet_mask).to_bytes(4, byteorder='big'))
+    dhcp_subnet = struct.pack("!cc4s", b'\x76', b'\x04', int(subnet).to_bytes(4, byteorder='big'))
+    dhcp_message = struct.pack("!ccc", b'\x35', b'\x01', b'\x01')
+
+    dhcp_options = DHCP_MAGIC_COOKIE + dhcp_message + dhcp_subnet_mask + dhcp_subnet + DHCP_END_FIELD
+    dhcp_full_frame = dhcp_frame + dhcp_options
+
+    logging.debug("DHCP REQUEST: {}".format(dhcp_full_frame))
+
+    sock.sendto(dhcp_full_frame, (str(server), 67))
 
 
-    DHCP_SUBNET_MASK = struct.pack("!cc4s", b'\x01',b'\x04',int(subnet_mask).to_bytes(4, byteorder='big'))
-    DHCP_SUBNET =  struct.pack("!cc4s", b'\x76',b'\x04',int(subnet).to_bytes(4, byteorder='big'))
-    DHCP_MESSAGE = struct.pack("!ccc", b'\x35', b'\x01', b'\x01')
+def dhcp_release(sock, server, xid, gateway_address, client_address, server_address, hwaddress, subnet_mask, subnet):
+    dhcp_frame = BOOTP_STRUCT.pack(b'\x01', b'\x01', b'\x06', b'\x00', xid, b'\x00', b'\x08',
+                                   int(client_address).to_bytes(4, byteorder='big'),
+                                   b'\x00',
+                                   int(server_address).to_bytes(4, byteorder='big'),
+                                   int(gateway_address).to_bytes(4, byteorder='big'),
+                                   hwaddress, b'\x00', b'\x00')
 
-    DHCP_OPTIONS = DHCP_MAGIC_COOKIE+DHCP_MESSAGE+DHCP_SUBNET_MASK+DHCP_SUBNET+DHCP_END_FIELD
-    dhcp_request = DHCP+DHCP_OPTIONS
+    dhcp_message = struct.pack("!ccc", b'\x35', b'\x01', b'\x07')
+    dhcp_subnet_mask = struct.pack("!cc4s", b'\x01', b'\x04', int(subnet_mask).to_bytes(4, byteorder='big'))
+    dhcp_subnet = struct.pack("!cc4s", b'\x76', b'\x04', int(subnet).to_bytes(4, byteorder='big'))
 
-    logging.debug("DHCP REQUEST: {}".format(dhcp_request))
+    dhcp_options = DHCP_MAGIC_COOKIE + dhcp_message + dhcp_subnet_mask + dhcp_subnet + DHCP_END_FIELD
+    dhcp_full_frame = dhcp_frame + dhcp_options
 
-    sock.sendto(dhcp_request, (str(server), 67))
+    logging.debug("DHCP RELEASE: {}".format(dhcp_full_frame))
 
-def DHCP_RELEASE(sock, server, xid, gateway_address, client_address, server_address, hwaddress, subnet_mask, subnet):
-    DHCP = BOOTP_STRUCT.pack(b'\x01', b'\x01', b'\x06', b'\x00', xid, b'\x00', b'\x08',
-                             int(client_address).to_bytes(4,byteorder='big'),
-                             b'\x00',
-                             int(server_address).to_bytes(4,byteorder='big'),
-                             int(gateway_address).to_bytes(4,byteorder='big'),
-                             hwaddress, b'\x00', b'\x00')
+    sock.sendto(dhcp_full_frame, (str(server), 67))
 
-    DHCP_MESSAGE = struct.pack("!ccc", b'\x35', b'\x01', b'\x07')
-    DHCP_SUBNET_MASK = struct.pack("!cc4s", b'\x01',b'\x04',int(subnet_mask).to_bytes(4, byteorder='big'))
-    DHCP_SUBNET =  struct.pack("!cc4s", b'\x76',b'\x04',int(subnet).to_bytes(4, byteorder='big'))
 
-    DHCP_OPTIONS = DHCP_MAGIC_COOKIE+DHCP_MESSAGE+DHCP_SUBNET_MASK+DHCP_SUBNET+DHCP_END_FIELD
-    dhcp_request = DHCP+DHCP_OPTIONS
-
-    logging.debug("DHCP RELEASE: {}".format(dhcp_request))
-
-    sock.sendto(dhcp_request, (str(server), 67))
-
-if __name__== '__main__':
+if __name__ == '__main__':
     main()
