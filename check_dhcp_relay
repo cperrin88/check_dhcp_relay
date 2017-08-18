@@ -101,7 +101,7 @@ def main():
 
         sock.close()
 
-        print("DHCP OK | responsetime={:.2f}ms;;;;".format((end - start) * 10))
+        print("DHCP OK | responsetime={:.2f}ms".format((end - start) * 10))
         sys.exit(0)
     else:
         print("DHCP server unreachable")
