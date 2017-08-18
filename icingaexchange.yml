@@ -13,6 +13,6 @@ releases:
     files:
       -
         name: check_dhcp_relay
-        url: "file:///check_dhcp_relay"
+        url: "https://github.com/cperrin88/check_dhcp_relay/releases/download/1.0/check_dhcp_relay"
         description: "First release"
         checksum: 0e250db667bfc4fb1fcb0bffe016fad0
