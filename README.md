@@ -8,6 +8,8 @@ It is written in pure python3 and has no external dependencies. It should theref
 
 Python3
 
+Needs to be run as root
+
 ## Usage
 
 ```
