@@ -1,4 +1,4 @@
-name: check_dhcp_relay
+name: Check DHCP Relay
 description: "file:///README.md"
 url: "https://github.com/cperrin88/check_dhcp_relay"
 tags: DHCP
