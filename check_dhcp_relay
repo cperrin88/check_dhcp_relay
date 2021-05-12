@@ -1,4 +1,22 @@
-#!/usr/bin/env python3
+#!/usr/bin/python3
+
+"""
+check_dhcp_relay
+Copyright (C) 2017 Christopher Perrin
+
+This program is free software: you can redistribute it and/or modify
+it under the terms of the GNU General Public License as published by
+the Free Software Foundation, either version 3 of the License, or
+(at your option) any later version.
+
+This program is distributed in the hope that it will be useful,
+but WITHOUT ANY WARRANTY; without even the implied warranty of
+MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+GNU General Public License for more details.
+
+You should have received a copy of the GNU General Public License
+along with this program.  If not, see <http://www.gnu.org/licenses/>.
+"""
 
 import socket
 import ipaddress
@@ -8,6 +26,8 @@ import argparse
 import select
 import struct
 import sys
+import os
+import random
 import time
 import binascii
 
@@ -18,7 +38,7 @@ DHCP_END_FIELD = b'\xFF'
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument('-H', '--host', required=True, type=str, help='address or name of the DHCP server')
+    parser.add_argument('-H', '--host', required=True, type=str, nargs='+', help='address or name of the DHCP server(s)')
     parser.add_argument('-r', '--relay', required=True, type=str, help='relay host address')
     parser.add_argument('-n', '--network', required=True, type=str, help='network that should be requested')
     parser.add_argument('-m', '--mask', required=True, type=str, help='netmask for the network in dotted format')
@@ -44,11 +64,14 @@ def main():
     logging.basicConfig(level=level)
 
     xid = random.randint(0, 2 ** (4 * 8)).to_bytes(4, byteorder='big')
-    try:
-        dhcp_host = ipaddress.IPv4Address(args.host)
-    except ipaddress.AddressValueError:
-        host = socket.gethostbyname(args.host)
-        dhcp_host = ipaddress.IPv4Address(host)
+
+    hosts = []
+    for host in args.host:
+        try:
+            hosts.append(ipaddress.IPv4Address(args.host))
+        except ipaddress.AddressValueError:
+            host = socket.gethostbyname(host)
+            hosts.append(ipaddress.IPv4Address(host))
 
     client_mac = args.mac
 
@@ -70,7 +93,8 @@ def main():
     sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     sock.bind(('0.0.0.0', 67))
 
-    dhcp_request(sock, dhcp_host, xid, gateway_address, client_mac, subnet_mask, subnet)
+    for host in hosts:
+        dhcp_request(sock, host, xid, gateway_address, client_mac, subnet_mask, subnet)
 
     start = time.clock()
 
@@ -96,16 +120,17 @@ def main():
             sys.exit(2)
 
         if not args.no_release:
-            dhcp_release(sock, dhcp_host, xid, gateway_address, client_address, server_address, client_mac, subnet_mask,
-                         subnet)
+            for host in hosts:
+                dhcp_release(sock, host, xid, gateway_address, client_address, server_address, client_mac, subnet_mask,
+                             subnet)
 
         sock.close()
 
-        print("DHCP OK | responsetime={:.2f}ms".format((end - start) * 10))
-        sys.exit(0)
+        print("DHCP OK: Received {} | responsetime={:.2f}ms".format(client_address, (end - start) * 10))
+        return 0
     else:
         print("DHCP server unreachable")
-        sys.exit(2)
+        return 2
 
 
 def dhcp_request(sock, server, xid, gateway_address, hwaddress, subnet_mask, subnet):
@@ -145,4 +170,23 @@ def dhcp_release(sock, server, xid, gateway_address, client_address, server_addr
 
 
 if __name__ == '__main__':
-    main()
+    try:
+        pid = str(os.getpid())
+        pidfile = "/tmp/check_dhcp_relay.pid"
+        # Random sleep between 0.1 and 2.0s to limit risk of locking
+        time.sleep(random.uniform(0.1,5.0))
+        if os.path.isfile(pidfile) and os.path.getctime(pidfile) < time.time() - 5*60:
+            # That's more than 5 minutes old, it's a leftover for sure
+            os.remove(pidfile)
+        if os.path.isfile(pidfile):
+            print('SKIPPED: Skipped because lock file is stil there')
+            sys.exit(0)
+        else:
+            with open(pidfile, 'w') as fh:
+                fh.write(pid+'\n')
+            ret = main()
+            os.remove(pidfile)
+            sys.exit(ret)
+    except Exception as e:
+        print("UNKNOWN: Exception occurred: %s: %s" % (e.__class__.__name__, e))
+        sys.exit(3)
